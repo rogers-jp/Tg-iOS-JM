@@ -27,8 +27,48 @@ public enum TelegramSearchPeersScope: Equatable {
 }
 
 public func _internal_searchPeers(accountPeerId: PeerId, postbox: Postbox, network: Network, query: String, scope: TelegramSearchPeersScope) -> Signal<([FoundPeer], [FoundPeer]), NoError> {
-    let _ = (accountPeerId, postbox, network, query, scope)
-    return .single(([], []))
+    switch scope {
+    case .channels, .groups, .globalPosts:
+        return .single(([], []))
+    case .everywhere, .privateChats:
+        break
+    }
+
+    let searchResult = network.request(Api.functions.contacts.search(flags: 0, q: query, limit: 20), automaticFloodWait: false)
+    |> map(Optional.init)
+    |> `catch` { _ in
+        return Signal<Api.contacts.Found?, NoError>.single(nil)
+    }
+
+    return searchResult
+    |> mapToSignal { result -> Signal<([FoundPeer], [FoundPeer]), NoError> in
+        guard let result else {
+            return .single(([], []))
+        }
+
+        switch result {
+        case let .found(foundData):
+            let (myResults, results, _, users) = (foundData.myResults, foundData.results, foundData.chats, foundData.users)
+            return postbox.transaction { transaction -> ([FoundPeer], [FoundPeer]) in
+                let parsedPeers = AccumulatedPeers(transaction: transaction, users: users)
+                updatePeers(transaction: transaction, accountPeerId: accountPeerId, peers: parsedPeers)
+
+                func mapUsers(_ source: [Api.Peer]) -> [FoundPeer] {
+                    var mapped: [FoundPeer] = []
+                    for result in source {
+                        let peerId: PeerId = result.peerId
+                        guard let peer = parsedPeers.get(peerId), let user = peer as? TelegramUser, user.botInfo == nil else {
+                            continue
+                        }
+                        mapped.append(FoundPeer(peer: EnginePeer(user), subscribers: user.subscriberCount))
+                    }
+                    return mapped
+                }
+
+                return (mapUsers(myResults), mapUsers(results))
+            }
+        }
+    }
 }
 
 func _internal_searchLocalSavedMessagesPeers(account: Account, query: String, indexNameMapping: [EnginePeer.Id: [PeerIndexNameRepresentation]]) -> Signal<[EnginePeer], NoError> {
