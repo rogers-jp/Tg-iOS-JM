@@ -332,11 +332,11 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
             guard let self else {
                 return
             }
-            if filter == .publicPosts && !self.showPublicPostsTab {
-                self.showPublicPostsTab = true
-                if let (layout, navigationBarHeight) = self.validLayout {
-                    self.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: .animated(duration: 0.3, curve: .easeInOut))
+            if filter == .publicPosts || filter == .globalPosts {
+                Queue.mainQueue().justDispatch {
+                    self.paneContainerNode.requestSelectPane(.chats)
                 }
+                return
             }
             Queue.mainQueue().justDispatch {
                 self.paneContainerNode.requestSelectPane(filter)
@@ -577,7 +577,6 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         }
         
         self.recentAppsDisposable = context.engine.peers.managedUpdatedRecentApps().startStrict()
-        self.refreshedGlobalPostSearchStateDisposable = context.engine.messages.refreshGlobalPostSearchState().startStrict()
         
         self._ready.set(self.paneContainerNode.isReady.get()
         |> map { _ in Void() })
@@ -1213,6 +1212,7 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
                                     return state.withUpdatedSelectedMessageIds([message.id])
                                 }
                                 
+                            if filteredFilters != previousFilters || hasPublicPosts != previousHasPublicPosts  {
                                 if let (layout, navigationBarHeight) = strongSelf.validLayout {
                                     strongSelf.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: .immediate)
                                 }

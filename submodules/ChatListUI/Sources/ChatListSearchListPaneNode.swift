@@ -2581,41 +2581,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                 let _ = previousRecentlySearchedPeersState.swap(nil)
             }
             
-            let foundRemotePeers: Signal<([FoundPeer], [FoundPeer], [AdPeer], Bool), NoError>
-            let currentRemotePeersValue: ([FoundPeer], [FoundPeer], [AdPeer]) = currentRemotePeers.with { $0 } ?? ([], [], [])
-            if case .savedMessagesChats = location {
-                foundRemotePeers = .single(([], [], [], false))
-            } else if let query = query, case .chats = key {
-                if query.hasPrefix("#") || options?.folder != nil {
-                    foundRemotePeers = .single(([], [], [], false))
-                } else {
-                    foundRemotePeers = (
-                        .single((currentRemotePeersValue.0, currentRemotePeersValue.1, currentRemotePeersValue.2, true))
-                        |> then(
-                            globalPeerSearchContext.searchRemotePeers(engine: context.engine, query: query)
-                            |> mapToSignal { result in
-                                return context.engine.peers.searchAdPeers(query: query)
-                                |> map { adPeers in
-                                    return (result.0, result.1, adPeers, false)
-                                }
-                            }
-                        )
-                    )
-                }
-            } else if let query = query, case .channels = key {
-                foundRemotePeers = (
-                    .single((currentRemotePeersValue.0, currentRemotePeersValue.1, currentRemotePeersValue.2, true))
-                    |> then(
-                        globalPeerSearchContext.searchRemotePeers(engine: context.engine, query: query, scope: .channels)
-                        |> map { ($0.0, $0.1, [], false) }
-                    )
-                )
-            } else if let query, case .apps = key {
-                let _ = query
-                foundRemotePeers = .single(([], [], [], false))
-            } else {
-                foundRemotePeers = .single(([], [], [], false))
-            }
+            let foundRemotePeers: Signal<([FoundPeer], [FoundPeer], [AdPeer], Bool), NoError> = .single(([], [], [], false))
             let searchLocations: [SearchMessagesLocation]
             if key == .globalPosts {
                 searchLocations = [SearchMessagesLocation.general(scope: .globalPosts(allowPaidStars: approvedGlobalPostQueryState?.price), groupId: nil, tags: nil, minDate: nil, maxDate: nil, folderId: nil)]
@@ -2649,68 +2615,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
             }
             
             let foundPublicMessages: Signal<([FoundRemoteMessages], Bool), NoError>
-            if key == .chats || key == .publicPosts, let query, query.hasPrefix("#") {
-                let searchSignal = context.engine.messages.searchHashtagPosts(hashtag: finalQuery, state: nil, limit: 10)
-                
-                let loadMore: Signal<([FoundRemoteMessages], Bool), NoError>
-                if key == .publicPosts {
-                    loadMore = searchContexts.get()
-                    |> mapToSignal { searchContexts -> Signal<([FoundRemoteMessages], Bool), NoError> in
-                        let i = 0
-                        if let searchContext = searchContexts[i], searchContext.result.hasMore {
-                            if let _ = searchContext.loadMoreIndex {
-                                return context.engine.messages.searchHashtagPosts(hashtag: finalQuery, state: searchContext.result.state, limit: 80)
-                                |> map { result, updatedState -> ChatListSearchMessagesResult in
-                                    return ChatListSearchMessagesResult(query: finalQuery, messages: result.messages.map({ EngineMessage($0) }).sorted(by: { $0.index > $1.index }), readStates: result.readStates.mapValues { EnginePeerReadCounters(state: $0, isMuted: false) }, threadInfo: result.threadInfo, hasMore: !result.completed, totalCount: result.totalCount, state: updatedState)
-                                }
-                                |> mapToSignal { foundMessages -> Signal<([FoundRemoteMessages], Bool), NoError> in
-                                    updateSearchContexts { previous in
-                                        let updated = ChatListSearchMessagesContext(result: foundMessages, loadMoreIndex: nil)
-                                        var previous = previous
-                                        previous[i] = updated
-                                        return (previous, true)
-                                    }
-                                    return .complete()
-                                }
-                            } else {
-                                var currentResults: [FoundRemoteMessages] = []
-                                if let currentContext = searchContexts[i] {
-                                    currentResults.append(FoundRemoteMessages(messages: currentContext.result.messages, readCounters: currentContext.result.readStates, threadsData: currentContext.result.threadInfo, totalCount: currentContext.result.totalCount))
-                                }
-                                return .single((currentResults, false))
-                            }
-                        }
-                        
-                        return .complete()
-                    }
-                } else {
-                    loadMore = .complete()
-                }
-                    
-                foundPublicMessages = .single(([FoundRemoteMessages(messages: [], readCounters: [:], threadsData: [:], totalCount: 0)], true))
-                |> then(
-                    searchSignal
-                    |> map { result -> ([FoundRemoteMessages], Bool) in
-                        updateSearchContexts { _ in
-                            var resultContexts: [Int: ChatListSearchMessagesContext] = [:]
-                            resultContexts[0] = ChatListSearchMessagesContext(result: ChatListSearchMessagesResult(query: finalQuery, messages: result.0.messages.map({ EngineMessage($0) }).sorted(by: { $0.index > $1.index }), readStates: result.0.readStates.mapValues { EnginePeerReadCounters(state: $0, isMuted: false) }, threadInfo: result.0.threadInfo, hasMore: !result.0.completed, totalCount: result.0.totalCount, state: result.1), loadMoreIndex: nil)
-                            return (resultContexts, true)
-                        }
-                        
-                        let foundMessages = result.0
-                        let messages: [EngineMessage]
-                        if key == .chats {
-                            messages = foundMessages.messages.prefix(3).map { EngineMessage($0) }
-                        } else {
-                            messages = foundMessages.messages.map { EngineMessage($0) }
-                        }
-                        return ([FoundRemoteMessages(messages: messages, readCounters: foundMessages.readStates.mapValues { EnginePeerReadCounters(state: $0, isMuted: false) }, threadsData: foundMessages.threadInfo, totalCount: foundMessages.totalCount)], false)
-                    }
-                    |> delay(0.2, queue: Queue.concurrentDefaultQueue())
-                    |> then(loadMore)
-                )
-            } else {
-                foundPublicMessages = .single(([FoundRemoteMessages(messages: [], readCounters: [:], threadsData: [:], totalCount: 0)], false))
+            let foundPublicMessages: Signal<([FoundRemoteMessages], Bool), NoError> = .single(([FoundRemoteMessages(messages: [], readCounters: [:], threadsData: [:], totalCount: 0)], false))
             }
             
             let cleanFinalQuery = finalQuery.trimmingCharacters(in: .whitespacesAndNewlines)
